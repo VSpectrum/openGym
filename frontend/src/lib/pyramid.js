@@ -105,7 +105,8 @@ function maxSetsOf(workouts, exId) {
     for (const en of w.entries || []) {
       if (en.id !== exId) continue
       for (const s of en.sets || []) {
-        if (s.max && s.done && s.r > 0 && !isWarmupRow(s)) out.push({ w: Number(s.w) || 0, r: s.r, d: w.d, t: w.start })
+        const t = Number.isFinite(w.start) ? w.start : (typeof w.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(w.d) ? new Date(w.d + 'T12:00:00').getTime() : NaN)
+        if (s.max && s.done && s.r > 0 && !isWarmupRow(s) && Number.isFinite(t)) out.push({ w: Number(s.w) || 0, r: s.r, d: w.d, t })
       }
     }
   }

@@ -19,7 +19,6 @@ import { fatigueStateOf } from '../lib/recovery-view.js'
 import { e1rmSeries, best1RM, formulaOf } from '../lib/onerm.js'
 import { currentDbLoad, workoutAs } from '../lib/dumbbells.js'
 import { maxRepsSeries } from '../lib/pyramid.js'
-import { weighInAt } from '../lib/bodyweight.js'
 import { perSetSessions, perSetLines, dropOffSet } from '../lib/per-set.js'
 import {
   hasEffort, hasEstimableEffort, displayScale, scaleName, toScale, avgRir, effortSummary, effortWeeks,
@@ -433,9 +432,14 @@ export default function Stats() {
   const kind = displayScale(S)
   const hd = scaleName(kind)
 
-  const bwPts = S.bodyweight.filter(b => range === 0 || weighInAt(b) > now - range * 86400000)
-    .map(b => ({ t: weighInAt(b), y: b.w, d: b.d }))
-  const bw30 = S.bodyweight.filter(b => weighInAt(b) > now - 30 * 86400000)
+  const bwTime = b => (b?.d ? new Date(b.d + 'T12:00:00').getTime() : (Number.isFinite(b?.t) ? b.t : 0))
+  const bwPts = S.bodyweight
+    .filter(b => range === 0 || bwTime(b) >= now - range * 86400000)
+    .map(b => ({ t: bwTime(b), y: b.w, d: b.d || isoOf(new Date(bwTime(b))) }))
+    .sort((a, b) => a.t - b.t)
+  const bw30 = S.bodyweight
+    .filter(b => bwTime(b) >= now - 30 * 86400000)
+    .sort((a, b) => bwTime(a) - bwTime(b))
   const bwDelta30 = bw30.length > 1 ? bw30[bw30.length - 1].w - bw30[0].w : null
   const workouts = S.workouts
   const monthW = workouts.filter(w => workoutDay(w)?.slice(0, 7) === todayISO().slice(0, 7)).length
@@ -546,8 +550,9 @@ export default function Stats() {
         const mx = curMode === 'reps'
           ? (repsOnly ? Math.max(0, ...doneSets.map(completedRepsOf)) : data.best)
           : Math.max(0, ...doneSets.map(metric))
-        if (mx > 0) {
-          exPts.push({ t: w.start, y: mx, d: w.d, sets: doneSets, target: representative?.target })
+        const t = workoutAt(w)
+        if (mx > 0 && Number.isFinite(t)) {
+          exPts.push({ t, y: mx, d: w.d, sets: doneSets, target: representative?.target })
           // Weighted work on an assistance machine reads the other way: the smallest load is the
           // best (issue #232). Reps, duration and speed are always "more is better".
           const better = curMode === 'reps' && !repsOnly ? betterWeight(curEx, exBest || mx, mx) : Math.max(exBest, mx)
@@ -555,6 +560,7 @@ export default function Stats() {
         }
       }
     })
+    exPts.sort((a, b) => a.t - b.t)
     exList = exPts.slice(-5).reverse()
   }
   // Estimated 1RM (issue #18) — only reps-mode training produces one, so cardio and timed

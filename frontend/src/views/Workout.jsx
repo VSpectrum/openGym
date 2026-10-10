@@ -8,7 +8,7 @@ import { useUI } from '../store/useUI.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
-import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
+import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf, exLine } from '../lib/history.js'
 import { fmtNum, fmtPlate, exerciseNameText, fmtDate, fmtDaysAgo, todayISO, exCount, DAYN } from '../lib/format.js'
 import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
 import { clampIncline, hasIncline, inclineFits, inclineFrom, INCLINE_STEP } from '../lib/incline.js'
@@ -18,7 +18,7 @@ import { t, tn, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
 import { api, beacon } from '../lib/api.js'
 import { pyramidRestFor, maxRecordAt, isPyramid, pyramidLabel } from '../lib/pyramid.js'
 import { insertionIndexAfterCurrentUnit, nextUnfinishedUnit, setProgressHighWater, supersetFlowStep, restAfterSet, restOnRecheck, restSecFor, warmupRestSecFor, sideRestFor, stepUnitIndex, advanceAfterTimedRest } from '../lib/supersetFlow.js'
-import Media from '../components/Media.jsx'
+import Media, { Thumb } from '../components/Media.jsx'
 import WorkoutScrollAnchor from '../components/WorkoutScrollAnchor.jsx'
 import WorkoutChips from '../components/WorkoutChips.jsx'
 import { supersetMeta } from '../lib/superset-meta.js'
@@ -26,13 +26,13 @@ import WorkoutThumb, { hasWorkoutMedia } from '../components/WorkoutThumb.jsx'
 import { workoutSettingsSheet } from '../components/WorkoutSettingsSheet.jsx'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { REST_MAX, fmtRest } from '../lib/duration.js'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow, logPastWorkoutSheet } from '../sheets.jsx'
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
-import { defaultIncrement, weightIncrement, stepWeight } from '../lib/progression.js'
+import { defaultIncrement, weightIncrement, stepWeight, projectUpcomingProgression } from '../lib/progression.js'
 import { progressionGuidance } from '../lib/progression-copy.js'
 import { buildPlannedEntry, plannedConfigOf, builtOutOfProgression } from '../lib/session-start.js'
 import { routineChangesFromEntry, updateRoutineFromEntry } from '../lib/routines.js'
@@ -54,6 +54,138 @@ import { withMeaning, historyAs, dbLoadFor, entryDbLoad, bellsIn, ownedWeightsFo
 // and the second logged it at one second.
 const HOLD_KEY_GRACE_MS = 1500
 
+/* ---------- routine exercises preview & upcoming progression ---------- */
+function RoutineExercisesPreview({ routines, S, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const speedUnit = speedUnitOf(S)
+  const allEx = (routines || []).flatMap(r => (r.ex || []).map(cfg => ({ cfg, routine: r })))
+
+  if (!allEx.length) return null
+
+  const withProg = allEx.filter(({ cfg, routine }) => {
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    return proj?.hasProgression
+  }).length
+
+  return (
+    <div className="start-routine-preview">
+      <button
+        type="button"
+        className="start-preview-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+      >
+        <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+          <Icon name="chartLine" style={{ color: 'var(--acc)' }} />
+          <span>{open ? t('Hide exercises & progression') : t('Preview exercises & upcoming progression')}</span>
+          {!open && withProg > 0 && (
+            <span className="tag acc nocap" style={{ fontSize: 11, padding: '1px 6px' }}>
+              +{withProg}
+            </span>
+          )}
+        </span>
+        <Icon name={open ? 'chevronUp' : 'chevronDown'} />
+      </button>
+
+      {open && (
+        <div className="start-preview-list">
+          {allEx.map(({ cfg, routine }, idx) => {
+            const ex = exOr(cfg.id)
+            const proj = projectUpcomingProgression(S, cfg, routine)
+            const todayTarget = proj?.todayTarget || cfg
+            const todayLine = exLine(todayTarget, S.unit, speedUnit)
+            const progressedToday = proj?.todayPlan?.kind === 'up'
+            const deloadToday = proj?.todayPlan?.kind === 'deload'
+
+            return (
+              <div key={`${cfg.id}-${idx}`} className="start-preview-item">
+                <div className="row between start-preview-item-hd">
+                  <div className="row" style={{ gap: 8, alignItems: 'center', minWidth: 0 }}>
+                    <Thumb ex={ex} />
+                    <div style={{ minWidth: 0 }}>
+                      <div className={`start-preview-name ${exerciseNameClass(ex)}`}>
+                        {exerciseNameFor(ex)}
+                      </div>
+                      <div className="start-preview-target">{todayLine}</div>
+                    </div>
+                  </div>
+                  <div className="row" style={{ gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                    {progressedToday && (
+                      <span className="tag acc nocap" title={t('Progressed for today')}>
+                        <Icon name="arrowUp" />
+                        {t('Progressed')}
+                      </span>
+                    )}
+                    {deloadToday && (
+                      <span className="tag warn nocap" title={t('Deload')}>
+                        <Icon name="arrowDown" />
+                        {t('Deload')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {proj?.hasProgression && proj?.message ? (
+                  <div className="start-preview-upcoming">
+                    <Icon name="target" className="start-preview-prog-icon" />
+                    <span>{proj.message}</span>
+                  </div>
+                ) : (
+                  <div className="start-preview-upcoming dim">
+                    <span>{t('Targets stay where you set them')}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OtherRoutineItem({ routine, S }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="card start-other-card" style={{ marginBottom: 10, padding: '12px 14px' }}>
+      <div className="row between" style={{ alignItems: 'center' }}>
+        <div
+          className="row grow"
+          style={{ gap: 10, alignItems: 'center', minWidth: 0, cursor: 'pointer' }}
+          onClick={() => setOpen(v => !v)}
+        >
+          <span className="lrow-i" style={{ width: 36, height: 36, borderRadius: 8, fontSize: 20 }}>
+            <Icon name={glyphOf(routine.emoji)} />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <div className="tt" style={{ fontWeight: 600, fontSize: 15 }}>{routine.name}</div>
+            <div className="ss muted small">{exCount(routine.ex.length)}</div>
+          </div>
+        </div>
+        <div className="row" style={{ gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={open ? t('Hide exercises') : t('Preview exercises')}
+            title={open ? t('Hide exercises') : t('Preview exercises')}
+            onClick={() => setOpen(v => !v)}
+          >
+            <Icon name={open ? 'chevronUp' : 'chevronDown'} />
+          </button>
+          <Button variant="tinted" size="sm" onClick={() => startFlow([routine.id])}>
+            {t('Start')}
+          </Button>
+        </div>
+      </div>
+      {open && (
+        <div style={{ marginTop: 10, borderTop: '1px solid var(--sep)', paddingTop: 10 }}>
+          <RoutineExercisesPreview routines={[routine]} S={S} defaultOpen={true} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ---------- start chooser (no active workout) ---------- */
 function StartChooser() {
   const nav = useNavigate()
@@ -72,15 +204,16 @@ function StartChooser() {
         <div><div className="big">{todayName}</div><div className="muted small">{exCount(todayRoutines.reduce((n, r) => n + r.ex.length, 0))}</div></div>
         <span className="lrow-i" style={{ width: 38, height: 38, borderRadius: 9, fontSize: 22 }}><Icon name={glyphOf(todayRoutines[0].emoji)} /></span>
       </div>
+      <RoutineExercisesPreview routines={todayRoutines} S={S} />
+      <div style={{ height: 10 }} />
       <Button variant="primary" icon="play" onClick={() => startFlow(todayIds)}>{t('Start {0}', todayName)}</Button>
     </div>}
     {others.length > 0 && <><h4 className="sec">{t('Other routines')}</h4>
-      <div className="list">{others.map(r => <div key={r.id} className="item" onClick={() => startFlow([r.id])}>
-        <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
-        <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
-        <span className="tag acc">{t('Start')}</span></div>)}</div></>}
+      <div className="start-other-list">{others.map(r => <OtherRoutineItem key={r.id} routine={r} S={S} />)}</div></>}
     <div style={{ height: 14 }} />
     <Button icon="shuffle" onClick={() => startFlow([])}>{t('Freestyle workout (pick as you go)')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" icon="history" onClick={logPastWorkoutSheet}>{t('Log a past workout')}</Button>
     {!S.routines.length && <><div style={{ height: 10 }} /><Button variant="primary" onClick={() => nav('/plan')}>{t('Build a plan first')}</Button></>}
   </div>
 }

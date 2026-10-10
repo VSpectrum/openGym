@@ -50,19 +50,29 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
   const H = h
   const P = { l: axes ? 34 : 8, r: 12, t: 10, b: axes ? 22 : 8 }
   const single = points.length === 1
-  const pts = single ? [points[0], points[0]] : points
+  const sortedPts = [...points].sort((a, b) => (Number(a.t) || 0) - (Number(b.t) || 0))
+  const pts = single ? [sortedPts[0], sortedPts[0]] : sortedPts
   const multi = Array.isArray(series) && series.length > 0
-  const ys = multi ? series.flatMap(s => s.points.map(p => p.y)) : pts.map(p => p.y)
-  let ymin = Math.min(...ys), ymax = Math.max(...ys)
+  const ys = (multi ? series.flatMap(s => s.points.map(p => p.y)) : pts.map(p => p.y)).filter(Number.isFinite)
+  let ymin = ys.length ? Math.min(...ys) : 0, ymax = ys.length ? Math.max(...ys) : 1
   if (goal != null && isFinite(goal)) { ymin = Math.min(ymin, goal); ymax = Math.max(ymax, goal) }
   if (ymin === ymax) { ymin -= 1; ymax += 1 }
   const pad = (ymax - ymin) * 0.12; ymin -= pad; ymax += pad
-  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1
+  const allT = (multi
+    ? [...sortedPts.map(p => p.t), ...series.flatMap(s => s.points.map(p => p.t))]
+    : sortedPts.map(p => p.t)
+  ).filter(Number.isFinite)
+  const t0 = allT.length ? Math.min(...allT) : 0
+  const t1 = allT.length ? Math.max(...allT) : t0
   const X = t => (t1 === t0 ? (P.l + W - P.r) / 2 : P.l + (t - t0) / (t1 - t0) * (W - P.l - P.r))
   const Y = y => {
     const f = (y - ymin) / (ymax - ymin)
     return P.t + (invert ? f : 1 - f) * (H - P.t - P.b)
   }
+
+  const hoverSource = single ? [sortedPts[0]] : sortedPts
+  const hoverDates = hoverSource.map(p => p.d || isoOf(new Date(p.t)))
+  const showYear = new Set(hoverDates.map(iso => new Date(iso + 'T12:00:00').getFullYear())).size > 1
 
   const gridlines = []
   if (axes) {
@@ -82,12 +92,31 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
     }
     const d0 = new Date(t0), d1 = new Date(t1)
     const ticks = []
-    let m = new Date(d0.getFullYear(), d0.getMonth() + 1, 1)
-    while (m <= d1) { ticks.push({ t: +m, txt: t(MONTHS[m.getMonth()]) }); m = new Date(m.getFullYear(), m.getMonth() + 1, 1) }
-    if (ticks.length === 0 && !single) {
-      for (let i = 0; i <= 2; i++) {
-        const tv = t0 + (t1 - t0) * i / 2, dd = new Date(tv)
-        ticks.push({ t: tv, txt: dd.getDate() + ' ' + t(MONTHS[dd.getMonth()]), anchor: i === 0 ? 'start' : i === 2 ? 'end' : 'middle' })
+    if (t1 === t0) {
+      const dd = new Date(t0)
+      ticks.push({
+        t: t0,
+        txt: dd.getDate() + ' ' + t(MONTHS[dd.getMonth()]) + (showYear ? ' \'' + String(dd.getFullYear()).slice(2) : ''),
+        anchor: 'middle'
+      })
+    } else {
+      let m = new Date(d0.getFullYear(), d0.getMonth() + 1, 1)
+      while (m <= d1) {
+        const txt = showYear
+          ? t(MONTHS[m.getMonth()]) + ' \'' + String(m.getFullYear()).slice(2)
+          : t(MONTHS[m.getMonth()])
+        ticks.push({ t: +m, txt })
+        m = new Date(m.getFullYear(), m.getMonth() + 1, 1)
+      }
+      if (ticks.length === 0) {
+        for (let i = 0; i <= 2; i++) {
+          const tv = t0 + (t1 - t0) * i / 2, dd = new Date(tv)
+          ticks.push({
+            t: tv,
+            txt: dd.getDate() + ' ' + t(MONTHS[dd.getMonth()]) + (showYear ? ' \'' + String(dd.getFullYear()).slice(2) : ''),
+            anchor: i === 0 ? 'start' : i === 2 ? 'end' : 'middle'
+          })
+        }
       }
     }
     const every = Math.max(1, Math.ceil(ticks.length / 7))
@@ -104,9 +133,6 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
   const poly = pts.map(p => X(p.t).toFixed(1) + ',' + Y(p.y).toFixed(1)).join(' ')
   const last = pts[pts.length - 1]
   const gid = 'g' + Math.round(t0 % 1e7) + '_' + H
-  const hoverSource = single ? [points[0]] : points
-  const hoverDates = hoverSource.map(p => p.d || isoOf(new Date(p.t)))
-  const showYear = new Set(hoverDates.map(iso => new Date(iso + 'T12:00:00').getFullYear())).size > 1
   const hoverPts = hoverSource.map((p, i) => ({ x: X(p.t), y: Y(p.y), t: p.t, iso: hoverDates[i], v: p.y, note: p.note }))
   const marked = points.some(p => p.m != null)
 
@@ -140,10 +166,11 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
             lines that share their values show as nested stripes instead of hiding each other. */}
         {multi ? series.map((s, k) => {
           const sw = 2 + (series.length - 1 - k) * 2.4
+          const sPts = [...s.points].sort((a, b) => (Number(a.t) || 0) - (Number(b.t) || 0))
           return <g key={'s' + k}>
-            {s.points.length > 1 && <polyline points={s.points.map(p => X(p.t).toFixed(1) + ',' + Y(p.y).toFixed(1)).join(' ')}
+            {sPts.length > 1 && <polyline points={sPts.map(p => X(p.t).toFixed(1) + ',' + Y(p.y).toFixed(1)).join(' ')}
               fill="none" stroke={s.color} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />}
-            {s.points.map((p, i) => <circle key={i} cx={X(p.t)} cy={Y(p.y)} r={sw / 2 + 1.2} fill={s.color} />)}
+            {sPts.map((p, i) => <circle key={i} cx={X(p.t)} cy={Y(p.y)} r={sw / 2 + 1.2} fill={s.color} />)}
           </g>
         }) : <>
           <polygon points={`${P.l},${H - P.b} ${poly} ${X(last.t).toFixed(1)},${H - P.b}`} fill={`url(#${gid})`} />

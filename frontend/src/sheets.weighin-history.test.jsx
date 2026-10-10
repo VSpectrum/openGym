@@ -139,14 +139,21 @@ describe('log sheet date', () => {
     expect(useUI.getState().sheets).toHaveLength(0)
   })
 
-  it('leaves an earlier day that already has a weigh-in as it is', () => {
+  it('updates an earlier day that already has a weigh-in', () => {
     bwSheet()
     const log = mountTopSheet()
     setDate(log, '2026-09-03')
-    act(() => { button(log, 'Save').click() })
-    expect(useStore.getState().S.bodyweight).toEqual(LOG)
-    expect(useUI.getState().toastMsg).toBe('That date already has a weigh-in. Delete it first.')
-    expect(useUI.getState().sheets).toHaveLength(1)
+    const input = log.querySelector('.bw-read input')
+    expect(input.value).toBe('80')
+    act(() => {
+      Object.getOwnPropertyDescriptor(input.constructor.prototype, 'value').set.call(input, '78.2')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => { button(log, 'Update weight').click() })
+    const bw = useStore.getState().S.bodyweight
+    expect(bw.map(b => b.d)).toEqual(['2026-09-01', '2026-09-03', '2026-09-07', '2026-09-09', '2026-09-13'])
+    expect(bw.find(b => b.d === '2026-09-03')).toMatchObject({ w: 78.2 })
+    expect(useUI.getState().sheets).toHaveLength(0)
   })
 
   it('does not take a day after today', () => {
