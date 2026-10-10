@@ -104,6 +104,7 @@ vi.mock('../sheets.jsx', () => ({
   effortPickerSheet: mocks.effortPickerSheet,
   exerciseHistorySheet: mocks.exerciseHistorySheet,
   addRoutineToSessionSheet: vi.fn(),
+  logPastWorkoutSheet: vi.fn(),
 }))
 vi.mock('../components/Media.jsx', () => ({ default: () => null }))
 vi.mock('../components/WorkoutThumb.jsx', () => ({

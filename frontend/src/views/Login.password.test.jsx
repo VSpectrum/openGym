@@ -62,41 +62,34 @@ describe('Login with password sign-in', () => {
     expect(buttons(noPasskeys)).not.toContain('Sign in with password')
   })
 
-  it('next to passkeys it is a second button, and the footer no longer says "no passwords"', () => {
+  it('with password sign-in enabled, the username and password form is directly on screen', () => {
     mocks.config = { password_login: true, allow_guest: true }
     const page = mount(<Login />)
-    expect(buttons(page).slice(0, 3)).toEqual(['Sign in with passkey', 'Sign in with password', 'Create new profile'])
+    expect(page.querySelector('input[name="username"]')).toBeTruthy()
+    expect(page.querySelector('input[name="password"]')).toBeTruthy()
+    expect(buttons(page)).toContain('Sign in')
+    expect(buttons(page)).toContain('Sign in with passkey')
     expect(page.textContent).toContain('Passkeys use your fingerprint. A password works too, where passkeys do not.')
-    act(() => button(page, 'Sign in with password').click())
-    const sheet = mount(mocks.sheets[0](() => {}))
-    expect(sheet.querySelector('h3').textContent).toBe('Sign in with password')
-    expect(sheet.querySelector('input[autocomplete="current-password"]')).toBeTruthy()
   })
 
-  it('a browser without passkeys gets a way in instead of "stay local"', () => {
+  it('a browser without passkeys gets the inline password form instead of "stay local"', () => {
     mocks.webauthn = false
     mocks.config = { password_login: true, allow_guest: false }
     const page = mount(<Login />)
-    expect(page.textContent).toContain("This browser doesn't support passkeys. Sign in with your name and password instead.")
-    expect(page.textContent).not.toContain('Try a browser or device with passkey support.')
-    expect(buttons(page)).toEqual(['Sign in with password', 'Create new profile'])
-    // Creating a profile here can only mean a password: no passkey/password choice to make.
-    act(() => button(page, 'Create new profile').click())
-    const sheet = mount(mocks.sheets[0](() => {}))
-    expect(sheet.querySelector('.seg')).toBeNull()
-    expect(sheet.querySelector('input[placeholder="Repeat the password"]')).toBeTruthy()
-    expect(buttons(sheet)).toContain('Create profile')
+    expect(page.querySelector('input[name="username"]')).toBeTruthy()
+    expect(page.querySelector('input[name="password"]')).toBeTruthy()
+    expect(buttons(page)).toContain('Sign in')
+    expect(buttons(page)).not.toContain('Sign in with passkey')
   })
 
-  it('where both work, creating a profile starts on the passkey and switches to a password', () => {
+  it('switching to Create Profile tab shows registration inputs inline', () => {
     mocks.config = { password_login: true, invite_only: true }
     const page = mount(<Login />)
-    act(() => button(page, 'Create new profile').click())
-    const sheet = mount(mocks.sheets[0](() => {}))
-    expect(buttons(sheet)).toContain('Create passkey')
-    act(() => button(sheet, 'Password').click())
-    expect(buttons(sheet)).toContain('Create profile')
-    expect(sheet.querySelector('input[placeholder="Invite code"]')).toBeTruthy()
-    expect(sheet.querySelector('input[autocomplete="new-password"]')).toBeTruthy()
+    act(() => button(page, 'Create profile').click())
+    expect(page.querySelector('input[placeholder="Your name"]')).toBeTruthy()
+    expect(page.querySelector('input[placeholder="Invite code"]')).toBeTruthy()
+    expect(page.querySelector('input[placeholder="Password"]')).toBeTruthy()
+    expect(page.querySelector('input[placeholder="Repeat the password"]')).toBeTruthy()
+    expect(buttons(page)).toContain('Create profile')
   })
 })

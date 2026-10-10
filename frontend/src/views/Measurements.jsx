@@ -8,7 +8,7 @@ import {
   measurementSeries, measurementUnit, measurementValue, normalizeMeasurementEntry,
   toMeasurementDisplay, normalizeMeasurementsState,
 } from '../lib/measurements.js'
-import { fmtDate, fmtNum, todayISO, uid } from '../lib/format.js'
+import { fmtDate, fmtNum, todayISO, isoOf, uid } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
@@ -82,6 +82,10 @@ function MeasurementLog({ sourceDate, close }) {
       <span>{t('Date')}</span>
       <input className="field" type="date" value={date} max={todayISO()} onChange={e => setDate(e.target.value)} />
     </label>
+    <div className="chips" style={{ margin: '-4px 0 12px', padding: 0 }}>
+      <button className={'chip' + (date === todayISO() ? ' on' : '')} onClick={() => setDate(todayISO())}>{t('Today')}</button>
+      <button className={'chip' + (date === isoOf(new Date(Date.now() - 86400000)) ? ' on' : '')} onClick={() => setDate(isoOf(new Date(Date.now() - 86400000)))}>{t('Yesterday')}</button>
+    </div>
     {fields.length ? <div className="measure-form">
       {fields.map(field => <label className="measure-field" key={field.key}>
         <span>{t(field.label)}</span>

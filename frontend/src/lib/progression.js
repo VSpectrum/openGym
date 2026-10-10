@@ -23,6 +23,8 @@ import { normalizeRepRange } from './rep-range.js'
 import { isPyramid } from './pyramid.js'
 import { backoffAt } from './backoff.js'
 import { ownedWeightsFor, ownedUp, ownedDeload, ownedAround } from './dumbbells.js'
+import { todayISO, fmtNum } from './format.js'
+import { t } from './i18n.js'
 
 export const POLICIES = ['off', 'linear', 'greyskull', 'double', 'triple', 'time']
 
@@ -817,3 +819,116 @@ export function applyPrescription(sets, p, step = 2.5, floor = 0) {
   // what you are actually about to lift, not toward what you lifted last time.
   return rerampWarmups(out, step, floor)
 }
+
+/**
+ * Projects the upcoming progression for an exercise assuming today's planned target is completed cleanly.
+ * Used on the workout selection screen so lifters know what progression milestone is next.
+ */
+export function projectUpcomingProgression(S, cfg, routine) {
+  const mode = modeOf(cfg)
+  const policy = policyFor(cfg, routine, mode)
+  if (policy === 'off' || isPyramid(cfg) || routine?.excludeFromProgression) {
+    return { hasProgression: false, policy: 'off' }
+  }
+
+  const todayPlan = nextPrescription(S, cfg, routine)
+  if (todayPlan.policy === 'off') {
+    return { hasProgression: false, policy: 'off' }
+  }
+
+  const unit = S?.unit || 'kg'
+  const planSets = Math.max(1, cfg.sets || 1)
+  const todaySets = todayPlan.sets || planSets
+  const todayReps = todayPlan.reps ?? cfg.reps ?? 10
+  const todayWeight = todayPlan.weight ?? cfg.weight ?? 0
+  const todaySec = todayPlan.sec ?? cfg.sec ?? 45
+  const todayRowReps = Array.isArray(todayPlan.rowReps)
+    ? todayPlan.rowReps
+    : Array(todaySets).fill(todayReps)
+
+  const todayTarget = {
+    ...cfg,
+    sets: todaySets,
+    reps: todayReps,
+    weight: todayWeight,
+    sec: todaySec,
+    ...(Array.isArray(todayPlan.rowReps) ? { rowReps: todayPlan.rowReps } : {})
+  }
+
+  // Hypothetical workout: today's prescribed target completed cleanly
+  const hypSets = todayRowReps.map(r => ({
+    done: true,
+    r,
+    w: todayWeight,
+    sec: todaySec
+  }))
+
+  const hypEntry = {
+    id: cfg.id,
+    rid: routine?.id,
+    target: todayTarget,
+    planned: plannedOf(cfg),
+    sets: hypSets
+  }
+
+  const hypWorkout = {
+    d: todayISO(),
+    entries: [hypEntry]
+  }
+
+  const hypState = {
+    ...S,
+    workouts: [...(S?.workouts || []), hypWorkout]
+  }
+
+  const nextPlan = nextPrescription(hypState, cfg, routine)
+  if (nextPlan.policy === 'off' || nextPlan.kind === 'off') {
+    return {
+      hasProgression: false,
+      policy,
+      todayPlan,
+      todayTarget
+    }
+  }
+
+  let message = ''
+  const perSide = isPerSide(cfg)
+
+  if (nextPlan.kind === 'up') {
+    if (mode === 'time' && nextPlan.sec != null && nextPlan.sec !== todaySec) {
+      message = t('Complete today’s target to progress to {0}s hold in your next session', nextPlan.sec)
+    } else if (mode === 'reps' && nextPlan.sets != null && nextPlan.sets > todaySets) {
+      message = t('Complete today’s target to progress to {0} sets of {1} reps in your next session', nextPlan.sets, nextPlan.reps)
+    } else if (mode === 'reps' && nextPlan.reps != null && nextPlan.reps !== todayReps) {
+      if (perSide) {
+        message = t('Complete today’s target to progress to {0} reps ({1}/side) in your next session', nextPlan.reps, fmtNum(nextPlan.reps / 2))
+      } else {
+        message = t('Complete today’s target to progress to {0} reps in your next session', nextPlan.reps)
+      }
+    } else if (nextPlan.weight != null && nextPlan.weight !== todayWeight) {
+      if (nextPlan.reps != null && nextPlan.reps !== todayReps) {
+        message = t('Complete today’s target to progress to {0} {1} ({2} reps) in your next session', fmtNum(nextPlan.weight), unit, nextPlan.reps)
+      } else {
+        message = t('Complete today’s target to progress to {0} {1} in your next session', fmtNum(nextPlan.weight), unit)
+      }
+    }
+  } else if (nextPlan.kind === 'hold') {
+    if (nextPlan.reps != null && nextPlan.reps > todayReps) {
+      message = t('Complete today’s target to aim for {0} reps in your next session', nextPlan.reps)
+    }
+  }
+
+  if (!message && nextPlan.why && nextPlan.why[0]) {
+    message = t('Next session: {0}', t(...nextPlan.why))
+  }
+
+  return {
+    hasProgression: true,
+    policy,
+    todayPlan,
+    todayTarget,
+    nextPlan,
+    message
+  }
+}
+

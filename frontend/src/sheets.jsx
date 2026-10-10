@@ -292,24 +292,39 @@ function WeightInput({ value, setValue, unit }) {
 }
 
 /* ============================ body weight ============================ */
-function BwSheet({ required, onDone, close }) {
+function BwSheet({ required, onDone, date: propDate, initialDate, weight: propWeight, initialWeight, close }) {
   const st = useStore(s => s.S)
   const unit = st.unit
   const bw = lastBW(st)
-  const [v, setV] = useState(bw ? bw.w : 70)
+  const today = todayISO()
+  const yDate = new Date(); yDate.setDate(yDate.getDate() - 1); const yesterday = isoOf(yDate)
+  const initD = propDate || initialDate || today
+  const [date, setDate] = useState(initD)
+  const existingOnDate = st.bodyweight.find(b => b.d === initD)
+  const [v, setV] = useState(propWeight != null ? propWeight : initialWeight != null ? initialWeight : existingOnDate ? existingOnDate.w : bw ? bw.w : 70)
+
+  const handleDateChange = newDate => {
+    if (!newDate) return
+    setDate(newDate)
+    const existing = st.bodyweight.find(b => b.d === newDate)
+    if (existing) setV(existing.w)
+  }
+
   const save = () => {
     const n = Math.round((v || 0) * 10) / 10
     if (!n || n <= 0) { toast(t('Enter a valid weight')); return }
     if (bwTooHeavy(n, unit)) return
+    const targetDate = date || today
     update(s => {
-      const iso = todayISO()
-      const ex = s.bodyweight.find(b => b.d === iso)
-      if (ex) { ex.w = n; ex.t = Date.now() } else s.bodyweight.push({ d: iso, w: n, t: Date.now() })
+      const ex = s.bodyweight.find(b => b.d === targetDate)
+      const tStamp = targetDate === today ? Date.now() : (ex?.t || new Date(targetDate + 'T12:00:00').getTime())
+      if (ex) { ex.w = n; ex.t = tStamp } else s.bodyweight.push({ d: targetDate, w: n, t: tStamp })
       s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1))
     })
     close()
     if (onDone) onDone(n); else toast(t('Weight saved'))
   }
+  const isExisting = st.bodyweight.some(b => b.d === date)
   const recent = [...st.bodyweight].reverse().slice(0, 3)
   return <>
     {/* This sheet opens `locked` — swipe/backdrop/Escape/Android-back all no-op on it (see
@@ -324,10 +339,26 @@ function BwSheet({ required, onDone, close }) {
           <button className="iconbtn" aria-label={t('Cancel')} onClick={() => close()}><Icon name="xmark" /></button>
         </div>
       : <h3>{t('Log body weight')}</h3>}
-    <div className="muted small">{required ? t('Slide or tap to set your weight. We ask before every workout so your curve stays honest.') : t('Today') + ', ' + fmtDate(todayISO(), true)}</div>
+    {required ? (
+      <div className="muted small">{t('Slide or tap to set your weight. We ask before every workout so your curve stays honest.')}</div>
+    ) : (
+      <div style={{ marginBottom: 10 }}>
+        <div className="row between" style={{ alignItems: 'center', marginBottom: 6 }}>
+          <span className="small muted">{date === today ? t('Today') + ', ' + fmtDate(today, true) : date === yesterday ? t('Yesterday') + ', ' + fmtDate(yesterday, true) : fmtDate(date, true)}</span>
+          <input type="date" className="timef" style={{ padding: '3px 8px', fontSize: 13 }} value={date} max={today} onChange={e => handleDateChange(e.target.value)} aria-label={t('Weigh-in date')} />
+        </div>
+        <div className="chips" style={{ margin: 0, padding: 0 }}>
+          <button className={'chip' + (date === today ? ' on' : '')} onClick={() => handleDateChange(today)}>{t('Today')}</button>
+          <button className={'chip' + (date === yesterday ? ' on' : '')} onClick={() => handleDateChange(yesterday)}>{t('Yesterday')}</button>
+          {date !== today && date !== yesterday && (
+            <button className="chip on">{fmtDate(date, true)}</button>
+          )}
+        </div>
+      </div>
+    )}
     <WeightInput value={v} setValue={setV} unit={unit} />
     <div style={{ height: 14 }} />
-    <Button variant="primary" onClick={save}>{required ? t('Save & start workout') : t('Save')}</Button>
+    <Button variant="primary" onClick={save}>{required ? t('Save & start workout') : isExisting ? t('Update weight') : t('Save')}</Button>
     {required && <>
       <div style={{ height: 8 }} /><Button variant="ghost" className="dim" onClick={() => { close(); onDone && onDone(null) }}>{t('Start without weighing in')}</Button>
       <div style={{ height: 2 }} /><Button variant="ghost" className="dim" icon="swap" onClick={() => closeThenNav(close, '/workout')}>{t('Choose a different workout')}</Button>
@@ -335,7 +366,7 @@ function BwSheet({ required, onDone, close }) {
     {!required && recent.length > 0 && <>
       <h4 className="sec">{t('Recent weigh-ins')}</h4>
       <div className="list" style={{ gap: 0 }}>
-        {recent.map(b => <WeighInRow key={b.d} b={b} unit={unit} />)}
+        {recent.map(b => <WeighInRow key={b.d} b={b} unit={unit} onClick={() => { handleDateChange(b.d); setV(b.w) }} />)}
       </div>
       {st.bodyweight.length > recent.length && <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
         <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={weighInsSheet}>{t('All weigh-ins')}</Button>
@@ -352,13 +383,19 @@ export function bwSheet(opts = {}) {
 // The full list asks first (`confirm`): it is months of history scrolled through on a phone, and a
 // stray tap on one of its trash buttons took a past weigh-in with nothing to bring it back. The log
 // sheet's three are the ones just typed, where taking back a typo in one tap is the point.
-function WeighInRow({ b, unit, confirm = false }) {
-  const delEntry = () => update(s => { s.bodyweight = s.bodyweight.filter(x => x.d !== b.d) })
-  const ask = () => confirmSheet({
-    title: t('Delete weigh-in?'), message: `${fmtDate(b.d, true)} · ${fmtNum(b.w)} ${unit}`,
-    confirmText: t('Delete'), danger: true, onConfirm: delEntry,
-  })
-  return <div className="row between" style={{ padding: '9px 2px', borderBottom: '1px solid var(--sep)' }}>
+function WeighInRow({ b, unit, confirm = false, onClick }) {
+  const delEntry = e => {
+    e?.stopPropagation?.()
+    update(s => { s.bodyweight = s.bodyweight.filter(x => x.d !== b.d) })
+  }
+  const ask = e => {
+    e?.stopPropagation?.()
+    confirmSheet({
+      title: t('Delete weigh-in?'), message: `${fmtDate(b.d, true)} · ${fmtNum(b.w)} ${unit}`,
+      confirmText: t('Delete'), danger: true, onConfirm: () => update(s => { s.bodyweight = s.bodyweight.filter(x => x.d !== b.d) }),
+    })
+  }
+  return <div className="row between" style={{ padding: '9px 2px', borderBottom: '1px solid var(--sep)', cursor: onClick ? 'pointer' : undefined }} {...(onClick ? tappable(onClick) : {})}>
     <span className="small muted">{fmtDate(b.d, true)}</span>
     <span className="row" style={{ gap: 12 }}><b>{fmtNum(b.w)} {unit}</b>
       <button className="iconbtn" style={{ width: 32, height: 30, borderRadius: 8, fontSize: 15, color: 'var(--red)' }} onClick={confirm ? ask : delEntry} aria-label={t('Delete weigh-in')}><Icon name="trash" /></button></span>
@@ -378,11 +415,17 @@ function WeighIns() {
     .map(w => ({ t: new Date(w.key + 'T12:00:00').getTime(), y: Math.round(w.avg * 100) / 100, d: w.key })), [weeks])
   const n = weeks.reduce((sum, w) => sum + w.n, 0)
   if (!n) return <>
-    <h3>{t('Weigh-ins')}</h3>
+    <div className="row between" style={{ alignItems: 'center', marginBottom: 2 }}>
+      <h3 style={{ margin: 0 }}>{t('Weigh-ins')}</h3>
+      <Button size="sm" icon="plus" onClick={() => bwSheet()}>{t('Log weight')}</Button>
+    </div>
     <div className="empty"><div className="ico"><Icon name="scale" /></div>{t('No weigh-ins yet. Log your weight to start the curve.')}</div>
   </>
   return <>
-    <h3 style={{ marginBottom: 2 }}>{t('Weigh-ins')}</h3>
+    <div className="row between" style={{ alignItems: 'center', marginBottom: 2 }}>
+      <h3 style={{ margin: 0 }}>{t('Weigh-ins')}</h3>
+      <Button size="sm" icon="plus" onClick={() => bwSheet()}>{t('Log weight')}</Button>
+    </div>
     <div className="muted small" style={{ marginBottom: 10 }}>{tn('{0} weigh-in', '{0} weigh-ins', n)}</div>
     <div className="chart"><LineChart points={points} h={140} unit={st.unit} goal={st.targetW} /></div>
     <div className="small dim" style={{ marginTop: 6 }}>{t('Weekly average')}</div>
@@ -400,7 +443,7 @@ function WeighIns() {
             <span className="muted" style={{ whiteSpace: 'nowrap' }}>{t('Average {0}', fmtNum(w.avg) + ' ' + st.unit)}</span>
           </span>
         </div>
-        <div className="list" style={{ gap: 0 }}>{w.entries.map(b => <WeighInRow key={b.d} b={b} unit={st.unit} confirm />)}</div>
+        <div className="list" style={{ gap: 0 }}>{w.entries.map(b => <WeighInRow key={b.d} b={b} unit={st.unit} confirm onClick={() => bwSheet({ date: b.d, weight: b.w })} />)}</div>
       </div>
     })}
   </>
@@ -2222,12 +2265,17 @@ function DayOverride({ iso, close }) {
   // A planned day in the past with nothing logged was missed — or trained and never logged,
   // like a run you forgot to start the app for (#284). Logging it opens "Log a past workout" on
   // that date with the day's routines picked, where the time and the duration can still change.
-  const missed = iso < todayISO() && effIds.length > 0 && !workoutsOn(st, iso).length
+  const isPast = iso < todayISO()
+  const isTodayOrPast = iso <= todayISO()
+  const dayWorkouts = workoutsOn(st, iso)
+  const missed = isPast && effIds.length > 0 && !dayWorkouts.length
   const logIt = () => { close(); logPastWorkoutSheet({ iso, routineIds: effIds }) }
+  const logAny = () => { close(); logPastWorkoutSheet({ iso }) }
+  const bwOnDay = st.bodyweight.find(b => b.d === iso)
   // A note on a day off (#261, lib/day-notes.js): offered on today and past days with nothing
   // logged, kept in view on any day that already has one. Quiet on purpose: a row, not a button.
   const note = dayNoteOf(st, iso)
-  const canNote = !!note || (canNoteDay(iso) && !workoutsOn(st, iso).length)
+  const canNote = !!note || (canNoteDay(iso) && !dayWorkouts.length)
   // The coach week's sessions still to do come first, in slot order: picking one here pins it
   // to this day — the same per-date override, read back by queueNext (lib/queue.js). A session
   // already pinned to another day says so in place of its exercise count. Done sessions and
@@ -2252,7 +2300,21 @@ function DayOverride({ iso, close }) {
   return <>
     <h3>{fmtDate(iso, true)}</h3>
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{changed && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
-    {missed && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>}
+    {missed ? (
+      <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>
+    ) : isPast && !dayWorkouts.length ? (
+      <div style={{ marginBottom: 14 }}><Button variant="primary" icon="plus" onClick={logAny}>{t('Log a past workout')}</Button></div>
+    ) : isPast && dayWorkouts.length > 0 ? (
+      <div style={{ marginBottom: 14 }}><Button variant="ghost" icon="plus" onClick={logAny}>{t('Log another workout for this day')}</Button></div>
+    ) : null}
+    {isTodayOrPast && <div className="item" style={{ marginBottom: 14 }} {...tappable(() => { close(); bwSheet({ date: iso, weight: bwOnDay?.w }) })}>
+      <span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name="scale" /></span>
+      <div className="grow">
+        <div className="tt">{bwOnDay ? t('Body weight: {0} {1}', fmtNum(bwOnDay.w), st.unit) : t('Log body weight for this day')}</div>
+        <div className="ss">{bwOnDay ? t('Logged: {0} · tap to edit', fmtNum(bwOnDay.w) + ' ' + st.unit) : t('Record your weight on this date')}</div>
+      </div>
+      <Icon name={bwOnDay ? 'pencil' : 'plus'} className="chev" />
+    </div>}
     {canNote && <div className="day-note" style={{ marginBottom: 14 }}>
       <div className="item day-note-row" {...tappable(() => dayNoteSheet(iso))}>
         <span className="lrow-i" style={{ background: 'var(--surface-3)' }}><Icon name={note?.tag ? DAY_NOTE_ICON[note.tag] : 'note'} /></span>
@@ -2723,7 +2785,11 @@ function Calendar({ start, close }) {
       {Object.keys(st.dayNotes || {}).some(k => k.startsWith(y + '-' + String(mo + 1).padStart(2, '0')) && dayNoteOf(st, k)) &&
         <span><i style={{ background: 'var(--indigo)' }} />{t('Day note')}</span>}
     </div>
-    <div className="small dim" style={{ textAlign: 'center', marginTop: 10 }}>{t('Tap a trained day for details · tap any other day to plan a session')}</div>
+    <div className="row" style={{ justifyContent: 'center', gap: 10, marginTop: 12 }}>
+      <Button size="sm" variant="ghost" icon="history" onClick={() => { close(); logPastWorkoutSheet() }}>{t('Log a past workout')}</Button>
+      <Button size="sm" variant="ghost" icon="scale" onClick={() => { close(); bwSheet() }}>{t('Log weight')}</Button>
+    </div>
+    <div className="small dim" style={{ textAlign: 'center', marginTop: 8 }}>{t('Tap a trained day for details · tap any other day to plan a session')}</div>
   </>
 }
 export const calendarSheet = start => ui().openSheet(close => <Calendar start={start} close={close} />)
@@ -2851,6 +2917,10 @@ function LogPastWorkout({ initial, close }) {
     <div className="muted small" style={{ marginBottom: 12 }}>{t('Logged on the usual workout screen, without timers.')}</div>
     <Row icon="calendar" title={t('Date')}>
       <input type="date" className="timef" value={date} max={today} onChange={e => setDate(e.target.value)} /></Row>
+    <div className="chips" style={{ margin: '-2px 0 10px', padding: 0 }}>
+      <button className={'chip' + (date === isoOf(yesterday) ? ' on' : '')} onClick={() => setDate(isoOf(yesterday))}>{t('Yesterday')}</button>
+      <button className={'chip' + (date === today ? ' on' : '')} onClick={() => setDate(today)}>{t('Today')}</button>
+    </div>
     <Row icon="clock" title={t('Start time')}>
       <input type="time" className="timef" value={time} onChange={e => setTime(e.target.value)} /></Row>
     <Stepper label={t('Duration')} unit={t('min')} value={dur} step={5} min={0} decimal={false} invalid={!(dur >= 1) || dur > MAX_DURATION_MIN} onChange={v => setDur(Math.round(v))} />

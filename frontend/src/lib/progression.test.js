@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   readSession, sessionsFor, stallCount, nextPrescription, applyPrescription, plannedOf, planChanged,
   policyFor, defaultIncrement, weightIncrement, epley1RM, deloadTarget1RM,
-  deloadFactorOf, DELOAD_FACTOR, POLICIES_FOR, DELOAD_AFTER, MAX_BW_SETS
+  deloadFactorOf, DELOAD_FACTOR, POLICIES_FOR, DELOAD_AFTER, MAX_BW_SETS, projectUpcomingProgression
 } from './progression.js'
 import { entryExcluded } from './history.js'
 import { EXDB, isAssisted } from './exercises.js'
@@ -1140,3 +1140,76 @@ describe('a weight off the increment grid keeps its offset when it goes up (issu
     expect(p.weight).toBe(62.5)
   })
 })
+
+describe('projectUpcomingProgression', () => {
+  it('projects bodyweight progression to +1 rep if today is completed cleanly', () => {
+    const BW_EX = EXDB.find(e => e.eq === 'body weight' && e.bp !== 'cardio').id
+    const cfg = { id: BW_EX, sets: 2, reps: 20, weight: 0, prog: 'linear', bodyweight: true }
+    const routine = { id: 'r1', name: 'Calisthenics', ex: [cfg] }
+    // Thursday & Friday completed 2 sets of 20
+    const S = {
+      unit: 'kg',
+      workouts: [{
+        d: '2026-10-09',
+        entries: [{
+          id: BW_EX,
+          target: { sets: 2, reps: 20, weight: 0 },
+          planned: { sets: 2, reps: 20 },
+          sets: [{ done: true, r: 20, w: 0 }, { done: true, r: 20, w: 0 }]
+        }]
+      }]
+    }
+
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    expect(proj.hasProgression).toBe(true)
+    // Friday's completion already earned 21 for today:
+    expect(proj.todayTarget.reps).toBe(21)
+    expect(proj.todayPlan.kind).toBe('up')
+    // Completing today's 21 reps projects 22 for next session:
+    expect(proj.nextPlan.reps).toBe(22)
+    expect(proj.message).toContain('22 reps')
+  })
+
+  it('projects weighted linear progression to +2.5 kg if today is completed cleanly', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 5, weight: 60, prog: 'linear', inc: 2.5 }
+    const routine = { id: 'r1', name: 'Upper', ex: [cfg] }
+    const S = { unit: 'kg', workouts: [] }
+
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    expect(proj.hasProgression).toBe(true)
+    expect(proj.todayTarget.weight).toBe(60)
+    expect(proj.nextPlan.weight).toBe(62.5)
+    expect(proj.message).toContain('62.5 kg')
+  })
+
+  it('projects timed hold progression to +5s if today is completed cleanly', () => {
+    const cfg = { id: LIFT, sets: 3, sec: 45, mode: 'time', prog: 'time', inc: 5 }
+    const routine = { id: 'r1', name: 'Core', ex: [cfg] }
+    const S = { unit: 'kg', workouts: [] }
+
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    expect(proj.hasProgression).toBe(true)
+    expect(proj.todayTarget.sec).toBe(45)
+    expect(proj.nextPlan.sec).toBe(50)
+    expect(proj.message).toContain('50s hold')
+  })
+
+  it('returns hasProgression: false when progression policy is off', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 10, prog: 'off' }
+    const routine = { id: 'r1', name: 'Custom', ex: [cfg] }
+    const S = { unit: 'kg', workouts: [] }
+
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    expect(proj.hasProgression).toBe(false)
+  })
+
+  it('returns hasProgression: false when routine is excluded from progression', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 10, prog: 'linear' }
+    const routine = { id: 'r1', name: 'Deload', excludeFromProgression: true, ex: [cfg] }
+    const S = { unit: 'kg', workouts: [] }
+
+    const proj = projectUpcomingProgression(S, cfg, routine)
+    expect(proj.hasProgression).toBe(false)
+  })
+})
+
